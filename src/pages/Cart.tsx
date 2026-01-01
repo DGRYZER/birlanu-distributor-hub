@@ -18,7 +18,6 @@ import DashboardLayout from '@/components/Layout/DashboardLayout';
 import CartTemplate from '@/components/CartTemplate/CartTemplate';
 import { toast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
 
 interface CartItem {
   id: string;
@@ -31,20 +30,69 @@ interface CartItem {
   schemes: string[];
 }
 
-const CLIENT_ID = '3MVG97z4K_iuCemhaHjeuAp6A5jpAuMB31Trve1nd0TZAeH7onoyc.LAATp2pnK2Ag3kaMYorR4Np7E7XgMa9';
-const CLIENT_SECRET = '49C874D60D67C1A6BF3B31213B2F924747A0D27CBEFD2ACEDE0751E20FFFEAA7';
-const TOKEN_URL = 'https://pde3-dev-ed.develop.my.salesforce.com/services/oauth2/token';
-const ORDER_API_URL = 'https://pde3-dev-ed.develop.my.salesforce.com/services/apexrest/createOrderFromCartV2';
+// Dummy cart data in JSON format
+const DUMMY_CART_DATA: CartItem[] = [
+  {
+    id: 'prod_001',
+    name: 'Premium Basmati Rice',
+    price: 899,
+    mrp: 1200,
+    quantity: 2,
+    unit: 'kg',
+    minOrderQty: 1,
+    schemes: ['Buy 3 Get 1 Free', 'Extra 5% off on 5kg']
+  },
+  {
+    id: 'prod_002',
+    name: 'Extra Virgin Olive Oil',
+    price: 1299,
+    mrp: 1800,
+    quantity: 1,
+    unit: 'litre',
+    minOrderQty: 1,
+    schemes: ['10% off on 2 litres']
+  },
+  {
+    id: 'prod_003',
+    name: 'Organic Almonds',
+    price: 699,
+    mrp: 950,
+    quantity: 3,
+    unit: 'pack',
+    minOrderQty: 2,
+    schemes: ['Buy 2 Get 10% off']
+  }
+];
+
+// Dummy order data
+const DUMMY_ORDERS = [
+  { id: 'ORD_001', number: 'ORD-2024-001', date: '2024-01-15', total: 4595, status: 'Delivered' },
+  { id: 'ORD_002', number: 'ORD-2024-002', date: '2024-01-20', total: 2897, status: 'Processing' },
+  { id: 'ORD_003', number: 'ORD-2024-003', date: '2024-01-25', total: 5298, status: 'Shipped' }
+];
 
 const Cart = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
   const navigate = useNavigate();
 
+  // Load cart from localStorage or use dummy data
   useEffect(() => {
     const savedCart = localStorage.getItem('cart');
     if (savedCart) {
-      setCart(JSON.parse(savedCart));
+      try {
+        const parsedCart = JSON.parse(savedCart);
+        if (parsedCart.length > 0) {
+          setCart(parsedCart);
+          return;
+        }
+      } catch (error) {
+        console.error('Error parsing cart from localStorage:', error);
+      }
     }
+    
+    // If no saved cart or empty, use dummy data
+    setCart(DUMMY_CART_DATA);
+    localStorage.setItem('cart', JSON.stringify(DUMMY_CART_DATA));
   }, []);
 
   const updateCart = (newCart: CartItem[]) => {
@@ -57,26 +105,40 @@ const Cart = () => {
     if (!item) return;
 
     if (newQuantity < item.minOrderQty) {
-      toast({ title: 'Minimum Order Quantity', description: `Minimum order quantity is ${item.minOrderQty} ${item.unit}`, variant: 'destructive' });
+      toast({ 
+        title: 'Minimum Order Quantity', 
+        description: `Minimum order quantity is ${item.minOrderQty} ${item.unit}`, 
+        variant: 'destructive' 
+      });
       return;
     }
+    
     if (newQuantity <= 0) {
       removeItem(id);
       return;
     }
-    const newCart = cart.map(item => item.id === id ? { ...item, quantity: newQuantity } : item);
+    
+    const newCart = cart.map(item => 
+      item.id === id ? { ...item, quantity: newQuantity } : item
+    );
     updateCart(newCart);
   };
 
   const removeItem = (id: string) => {
     const newCart = cart.filter(item => item.id !== id);
     updateCart(newCart);
-    toast({ title: 'Item Removed', description: 'Product removed from cart' });
+    toast({ 
+      title: 'Item Removed', 
+      description: 'Product removed from cart' 
+    });
   };
 
   const clearCart = () => {
     updateCart([]);
-    toast({ title: 'Cart Cleared', description: 'All items removed from cart' });
+    toast({ 
+      title: 'Cart Cleared', 
+      description: 'All items removed from cart' 
+    });
   };
 
   const addTemplateToCart = (templateItems: CartItem[]) => {
@@ -98,81 +160,58 @@ const Cart = () => {
   const calculateTax = () => Math.round(calculateSubtotal() * 0.18);
   const calculateTotal = () => calculateSubtotal() + calculateTax();
 
-  const fetchAccessToken = async () => {
-    const params = new URLSearchParams();
-    params.append('grant_type', 'client_credentials');
-    params.append('client_id', CLIENT_ID);
-    params.append('client_secret', CLIENT_SECRET);
-    const response = await axios.post(TOKEN_URL, params);
-    return response.data.access_token;
-  };
-
-// Add this constant for the new query endpoint
-const ORDER_QUERY_API_URL = 'https://pde3-dev-ed.develop.my.salesforce.com/services/data/v58.0/query?q=SELECT+OrderNumber+FROM+Order+WHERE+Id=';
-
-const placeOrder = async () => {
-  if (cart.length === 0) {
-    toast({
-      title: 'Empty Cart',
-      description: 'Please add items to cart before placing order',
-      variant: 'destructive'
-    });
-    return;
-  }
-
-  try {
-    const token = await fetchAccessToken();
-    const payload = {
-      accountId: '001fk000005qIMHAA2',
-      cartItems: cart.map(item => ({
-        productId: item.id,
-        quantity: item.quantity
-      }))
-    };
-
-    // Step 1: Create the order
-    const createOrderResponse = await axios.post(ORDER_API_URL, payload, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    if (!createOrderResponse.data.success) {
+  const placeOrder = async () => {
+    if (cart.length === 0) {
       toast({
-        title: 'Order Failed',
-        description: createOrderResponse.data.message,
+        title: 'Empty Cart',
+        description: 'Please add items to cart before placing order',
         variant: 'destructive'
       });
       return;
     }
 
-    // Step 2: Get the Salesforce Order ID from the response
-    const orderId = createOrderResponse.data.orderId; // Make sure this field exists in the response
-    
-    // Step 3: Query Salesforce to get the formatted order number
-    const queryResponse = await axios.get(`${ORDER_QUERY_API_URL}'${orderId}'`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    // Extract the formatted order number
-    const formattedOrderNumber = queryResponse.data.records[0].OrderNumber;
-
-    // Clear cart and show success message
-    clearCart();
-    toast({
-      title: 'Order Placed Successfully!',
-      description: `Order Number: ${formattedOrderNumber}`,
-      variant: 'default'
-    });
-    navigate('/orders');
-
-  } catch (err) {
-    console.error('Error placing order:', err);
-    toast({
-      title: 'Order Failed',
-      description: 'Failed to create order. Please try again later.',
-      variant: 'destructive'
-    });
-  }
-};
+    try {
+      // Simulate API delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Generate a random order number
+      const orderNumber = `ORD-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+      
+      // Create dummy order object
+      const newOrder = {
+        id: `order_${Date.now()}`,
+        number: orderNumber,
+        date: new Date().toISOString().split('T')[0],
+        total: calculateTotal(),
+        status: 'Processing',
+        items: [...cart]
+      };
+      
+      // Save to localStorage (simulating backend)
+      const existingOrders = JSON.parse(localStorage.getItem('orders') || '[]');
+      existingOrders.push(newOrder);
+      localStorage.setItem('orders', JSON.stringify(existingOrders));
+      
+      // Clear cart
+      clearCart();
+      
+      toast({
+        title: 'Order Placed Successfully!',
+        description: `Order Number: ${orderNumber}`,
+        variant: 'default'
+      });
+      
+      navigate('/orders');
+      
+    } catch (err) {
+      console.error('Error placing order:', err);
+      toast({
+        title: 'Order Failed',
+        description: 'Failed to create order. Please try again later.',
+        variant: 'destructive'
+      });
+    }
+  };
 
   const renderCartContent = () => {
     if (cart.length === 0) {
